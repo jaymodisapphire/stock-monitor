@@ -22,6 +22,9 @@ export default function Home() {
   const [newSym, setNewSym] = useState("");
   const [dir, setDir] = useState("above");
   const [lvl, setLvl] = useState("");
+  const [sugg, setSugg] = useState([]);
+  const [open, setOpen] = useState(false);
+  const [msg, setMsg] = useState("");
   const canvas = useRef(null);
   const chart = useRef(null);
 
@@ -125,10 +128,30 @@ export default function Home() {
     return () => { alive = false; clearInterval(id); };
   }, [sel, ready]);
 
-  const addSymbol = () => {
-    const s = newSym.trim().toUpperCase();
-    if (!s || wl.includes(s)) return;
-    setWl([...wl, s]); setSel(s); setNewSym("");
+  // search suggestions (debounced)
+  useEffect(() => {
+    const s = newSym.trim();
+    if (!s) { setSugg([]); return; }
+    const id = setTimeout(() => getJSON("/api/search?q=" + encodeURIComponent(s)).then(d => { setSugg(Array.isArray(d) ? d : []); setOpen(true); }).catch(() => setSugg([])), 300);
+    return () => clearTimeout(id);
+  }, [newSym]);
+
+  const addSymbol = async sym => {
+    const s = (sym || newSym).trim().toUpperCase();
+    if (!s) return;
+    setOpen(false);
+    if (wl.includes(s)) { setSel(s); setNewSym(""); return; }
+    setMsg("");
+    try {
+      const d = await getJSON("/api/quotes?symbols=" + encodeURIComponent(s));
+      if (!d.length) throw new Error("none");
+      setQuotes(q => ({ ...q, [d[0].symbol]: d[0] }));
+      setWl(w => [...w, s]); setSel(s); setNewSym(""); setSugg([]);
+    } catch { setMsg(`"${s}" malyo nahi. Suggestion list mathi select karo (jem ke COALINDIA.NS).`); }
+  };
+  const onEnter = () => {
+    const t = newSym.trim().toUpperCase();
+    addSymbol(sugg.find(x => x.symbol === t)?.symbol || sugg[0]?.symbol || t);
   };
   const removeSymbol = s => {
     const next = wl.filter(x => x !== s);
@@ -155,10 +178,21 @@ export default function Home() {
       </header>
       <main>
         <aside className="card">
-          <div className="row">
-            <input value={newSym} onChange={e => setNewSym(e.target.value)} onKeyDown={e => e.key === "Enter" && addSymbol()} placeholder="Add symbol e.g. MSFT, TCS.NS" />
-            <button className="p" onClick={addSymbol}>Add</button>
+          <div className="row" style={{ position: "relative" }}>
+            <input value={newSym} onChange={e => { setNewSym(e.target.value); setMsg(""); }} onFocus={() => setOpen(true)} onBlur={() => setTimeout(() => setOpen(false), 150)}
+              onKeyDown={e => e.key === "Enter" && onEnter()} placeholder="Search company or symbol…" />
+            <button className="p" onClick={onEnter}>Add</button>
+            {open && sugg.length > 0 && (
+              <div className="sugg">
+                {sugg.map(x => (
+                  <div key={x.symbol} className="sg" onMouseDown={() => addSymbol(x.symbol)}>
+                    <b>{x.symbol}</b><small>{x.name} · {x.exch}</small>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
+          {msg && <div className="dn" style={{ marginBottom: 8, fontSize: 12 }}>{msg}</div>}
           {wl.map(s => {
             const x = quotes[s] || {};
             return (

@@ -20,3 +20,5 @@ button{cursor:pointer}button.p{background:var(--ac);border-color:var(--ac);color
 .al{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--line)}.al.done{opacity:.5}
 #toasts{position:fixed;right:16px;top:16px;display:grid;gap:8px;z-index:9}
 .toast{background:var(--ac);padding:12px 16px;border-radius:8px;box-shadow:0 4px 14px #0008}
+.sugg{position:absolute;top:100%;left:0;right:0;z-index:5;background:var(--card);border:1px solid var(--line);border-radius:8px;margin-top:4px;max-height:280px;overflow:auto;box-shadow:0 6px 18px #0009}
+.sg{padding:8px 10px;cursor:pointer;display:flex;flex-direction:column}.sg:hover{background:var(--bg)}.sg small{color:var(--mu)}

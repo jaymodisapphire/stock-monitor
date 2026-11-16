@@ -1,8 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import { Chart, LineController, LineElement, PointElement, LinearScale, CategoryScale, Filler, Tooltip } from "chart.js";
-
-Chart.register(LineController, LineElement, PointElement, LinearScale, CategoryScale, Filler, Tooltip);
+import PriceChart from "@/components/PriceChart";
 
 const f = n => (n == null ? "–" : Number(n).toLocaleString(undefined, { maximumFractionDigits: 2 }));
 const getJSON = u => fetch(u).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); });
@@ -13,7 +11,9 @@ export default function Home() {
   const [wl, setWl] = useState(DEFAULT_WL);
   const [alerts, setAlerts] = useState([]);
   const [sel, setSel] = useState(DEFAULT_WL[0]);
-  const [range, setRange] = useState("1d");
+  const [tf, setTf] = useState("1D");
+  const [type, setType] = useState("candles");
+  const [ind, setInd] = useState({ vol: true, sma: false, ema: false, bb: false, rsi: false });
   const [quotes, setQuotes] = useState({});
   const [stats, setStats] = useState({});
   const [status, setStatus] = useState("connecting…");
@@ -25,8 +25,6 @@ export default function Home() {
   const [sugg, setSugg] = useState([]);
   const [open, setOpen] = useState(false);
   const [msg, setMsg] = useState("");
-  const canvas = useRef(null);
-  const chart = useRef(null);
 
   // load saved watchlist + alerts (browser only)
   useEffect(() => {
@@ -79,44 +77,6 @@ export default function Home() {
     });
     if (fired.length) { setAlerts(next); fired.forEach(notify); }
   }, [quotes, alerts]);
-
-  // create chart once
-  useEffect(() => {
-    chart.current = new Chart(canvas.current, {
-      type: "line",
-      data: { labels: [], datasets: [{ data: [], fill: true, pointRadius: 0, tension: 0.2, borderWidth: 2 }] },
-      options: {
-        animation: false, maintainAspectRatio: false, interaction: { mode: "index", intersect: false },
-        plugins: { legend: { display: false } },
-        scales: { x: { ticks: { maxTicksLimit: 8, color: "#8b95b0" }, grid: { display: false } }, y: { ticks: { color: "#8b95b0" }, grid: { color: "#27304a" } } }
-      }
-    });
-    return () => chart.current.destroy();
-  }, []);
-
-  // chart data: refresh every 30s
-  useEffect(() => {
-    if (!ready || !sel) return;
-    let alive = true;
-    const load = async () => {
-      try {
-        const d = await getJSON(`/api/chart?symbol=${encodeURIComponent(sel)}&range=${range}`);
-        if (!alive || !chart.current) return;
-        const up = d.length < 2 || d.at(-1).c >= d[0].c, col = up ? "#22c55e" : "#ef4444";
-        const ds = chart.current.data.datasets[0];
-        chart.current.data.labels = d.map(p => {
-          const t = new Date(p.t);
-          return range === "1d" ? t.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-            : t.toLocaleDateString([], { day: "numeric", month: "short", year: range === "1y" ? "2-digit" : undefined });
-        });
-        ds.data = d.map(p => p.c); ds.label = sel; ds.borderColor = col; ds.backgroundColor = col + "22";
-        chart.current.update();
-      } catch {}
-    };
-    load();
-    const id = setInterval(load, 30000);
-    return () => { alive = false; clearInterval(id); };
-  }, [sel, range, ready]);
 
   // month / year high-low
   useEffect(() => {
@@ -214,13 +174,15 @@ export default function Home() {
               <div className="price">{q ? `${f(q.price)} ${q.currency || ""}` : "–"}</div>
               {q && <div className={q.change >= 0 ? "up" : "dn"}>{q.change >= 0 ? "▲" : "▼"} {f(Math.abs(q.change))} ({f(q.pct)}%)</div>}
             </div>
-            <div className="tabs">
-              {[["1d", "Daily"], ["1mo", "Monthly"], ["1y", "Yearly"]].map(([r, l]) => (
-                <button key={r} className={range === r ? "on" : ""} onClick={() => setRange(r)}>{l}</button>
-              ))}
-            </div>
           </div>
-          <div className="box"><canvas ref={canvas} /></div>
+          <div className="toolbar">
+            {["1m", "5m", "15m", "1h", "1D", "1W", "1M"].map(t => <button key={t} className={tf === t ? "on" : ""} onClick={() => setTf(t)}>{t}</button>)}
+            <span className="sep" />
+            {[["candles", "Candles"], ["line", "Line"], ["area", "Area"]].map(([k, l]) => <button key={k} className={type === k ? "on" : ""} onClick={() => setType(k)}>{l}</button>)}
+            <span className="sep" />
+            {[["vol", "Volume"], ["sma", "SMA 20"], ["ema", "EMA 50"], ["bb", "Bollinger"], ["rsi", "RSI"]].map(([k, l]) => <button key={k} className={ind[k] ? "on" : ""} onClick={() => setInd(i => ({ ...i, [k]: !i[k] }))}>{l}</button>)}
+          </div>
+          {sel && <PriceChart symbol={sel} tf={tf} type={type} ind={ind} live={q?.price} />}
           <div className="stats">
             <Box l="Today" h={q?.dayHigh} lo={q?.dayLow} />
             <Box l="Last month" h={st.month?.high} lo={st.month?.low} />
@@ -243,6 +205,7 @@ export default function Home() {
           ))}
         </section>
       </main>
+      <footer className="attr">Charts by <a href="https://www.tradingview.com/" target="_blank" rel="noopener noreferrer">TradingView Lightweight Charts™</a> · Data: Yahoo Finance (may be delayed)</footer>
       <div id="toasts">{toasts.map(t => <div key={t.id} className="toast">{t.msg}</div>)}</div>
     </>
   );

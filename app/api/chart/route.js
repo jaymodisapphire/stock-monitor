@@ -3,22 +3,26 @@ import { chart, cache } from '@/lib/yahoo';
 
 export const dynamic = 'force-dynamic';
 
-const R = { '1d': ['5m', '5d'], '1mo': ['1d', '1mo'], '1y': ['1d', '1y'] };
+// timeframe -> [yahoo interval, yahoo range]
+const TF = {
+  '1m': ['1m', '5d'], '5m': ['5m', '5d'], '15m': ['15m', '1mo'], '1h': ['60m', '3mo'],
+  '1D': ['1d', '2y'], '1W': ['1wk', '10y'], '1M': ['1mo', 'max']
+};
 
 export async function GET(req) {
   try {
     const p = new URL(req.url).searchParams;
-    const symbol = p.get('symbol'), range = p.get('range') || '1d', c = R[range];
+    const symbol = p.get('symbol'), tf = p.get('tf') || '1D', c = TF[tf];
     if (!symbol || !c) return NextResponse.json({ error: 'bad request' }, { status: 400 });
     const { meta, quotes } = await chart(symbol, c[0], c[1]);
-    let q = quotes;
-    if (range === '1d' && q.length) {
-      const tz = meta.exchangeTimezoneName || 'UTC';
-      const day = d => d.toLocaleDateString('en-CA', { timeZone: tz });
-      const last = day(q.at(-1).date);
-      q = q.filter(x => day(x.date) === last);
+    const off = meta.gmtoffset || 0; // show times in the exchange's local time
+    const bars = new Map();
+    for (const x of quotes) {
+      const time = Math.floor(x.date.getTime() / 1000) + off;
+      bars.set(time, { time, open: x.open, high: x.high, low: x.low, close: x.close, volume: x.volume });
     }
-    return NextResponse.json(q.map(x => ({ t: x.date, c: x.close })), { headers: cache(15) });
+    const out = [...bars.values()].sort((a, b) => a.time - b.time);
+    return NextResponse.json(out, { headers: cache(10) });
   } catch (e) {
     return NextResponse.json({ error: e.message }, { status: 500 });
   }

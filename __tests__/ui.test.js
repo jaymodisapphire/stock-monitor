@@ -3,8 +3,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, act, cleanup } from '@testing-library/react';
 
 vi.mock('@/components/PriceChart', () => ({ default: p => (
-  <div data-testid="chart" data-symbol={p.symbol} data-tf={p.tf} data-type={p.type} data-live={p.live} data-ind={Object.keys(p.ind).filter(k => p.ind[k]).join(',')} />) }));
+  <div data-testid="chart" data-symbol={p.symbol} data-tf={p.tf} data-type={p.type} data-live={p.tick?.price} data-ind={Object.keys(p.ind).filter(k => p.ind[k]).join(',')} />) }));
 import Home from '@/app/page';
+import { encodeTick, FakeWS } from './helpers';
 
 let prices, notes;
 const flush = async (ms = 50) => { await act(async () => { await vi.advanceTimersByTimeAsync(ms); }); };
@@ -18,6 +19,7 @@ beforeEach(() => {
   notes = [];
   class N { static permission = 'granted'; static requestPermission = vi.fn(async () => 'granted'); constructor(t, o) { notes.push({ t, ...o }); } }
   vi.stubGlobal('Notification', N); window.Notification = N;
+  FakeWS.all = []; vi.stubGlobal('WebSocket', FakeWS);
   vi.stubGlobal('fetch', vi.fn(url => {
     const u = new URL(url, 'http://x');
     if (u.pathname === '/api/quotes') {
@@ -42,13 +44,13 @@ describe('watchlist + live data', () => {
   it('shows default watchlist with live prices, status and High/Low cards', async () => {
     await boot();
     expect(screen.getAllByText('150.25').length).toBeGreaterThan(0);
-    expect(screen.getByText(/● live/)).toBeTruthy();
+    expect(screen.getByText(/● updated/)).toBeTruthy();
     expect(screen.getByText('H 152.25')).toBeTruthy();   // today high
     expect(screen.getByText('H 180')).toBeTruthy();       // last month high
     expect(screen.getByText('L 90')).toBeTruthy();        // last year low
   });
-  it('refreshes the price every 10 seconds', async () => {
-    await boot(); prices.AAPL = 155.5; await flush(10000);
+  it('falls back to polling every 5 seconds while the stream is down', async () => {
+    await boot(); prices.AAPL = 155.5; await flush(5100);
     expect(screen.getAllByText('155.5').length).toBeGreaterThan(0);
   });
   it('timeframe, chart type and indicator buttons drive the chart', async () => {
@@ -62,10 +64,8 @@ describe('watchlist + live data', () => {
     expect(ch().ind).toBe('vol,sma,rsi');
     fireEvent.click(screen.getByText('Volume')); expect(ch().ind).toBe('sma,rsi');
   });
-  it('chart follows the selected stock and receives the live price', async () => {
-    await boot(); expect(screen.getByTestId('chart').dataset.live).toBe('150.25');
-    prices.AAPL = 151; await flush(10000); expect(screen.getByTestId('chart').dataset.live).toBe('151');
-    fireEvent.click(screen.getByText('TSLA')); expect(screen.getByTestId('chart').dataset.symbol).toBe('TSLA');
+  it('chart follows the selected stock', async () => {
+    await boot(); fireEvent.click(screen.getByText('TSLA')); expect(screen.getByTestId('chart').dataset.symbol).toBe('TSLA');
   });
   it('shows "connection problem" when the API fails', async () => {
     fetch.mockImplementation(() => json({ error: 'x' }, false));
@@ -138,5 +138,48 @@ describe('price alerts + notifications', () => {
     await boot(); expect(screen.getByText(/AAPL ≥ 999/)).toBeTruthy();
     fireEvent.click(screen.getAllByText('✕').at(-1)); await flush();
     expect(screen.queryByText(/AAPL ≥ 999/)).toBeNull();
+  });
+});
+
+describe('real-time stream', () => {
+  const ws = () => FakeWS.all.at(-1);
+  const push = o => act(() => { ws().emit({ type: 'pricing', message: encodeTick(o) }); });
+  const open = () => act(() => { ws().open(); });
+
+  it('subscribes to the whole watchlist', async () => {
+    await boot(); await open();
+    expect(JSON.parse(ws().sent[0]).subscribe).toEqual(['AAPL', 'TSLA', 'RELIANCE.NS', 'TCS.NS']);
+  });
+  it('badge: polling → connected → LIVE → back to connected when trades stop', async () => {
+    await boot(); expect(screen.getByText(/Polling every 5s/)).toBeTruthy();
+    await open(); expect(screen.getByText(/Stream connected/)).toBeTruthy();
+    await push({ id: 'AAPL', price: 151, time: Date.now() }); expect(screen.getByText(/LIVE stream/)).toBeTruthy();
+    await flush(36000); expect(screen.getByText(/Stream connected/)).toBeTruthy();
+  });
+  it('a tick updates price, change and % instantly and reaches the chart', async () => {
+    await boot(); await open();
+    await push({ id: 'AAPL', price: 152.25, time: Date.now() });
+    expect(screen.getAllByText('152.25').length).toBeGreaterThan(0);
+    expect(screen.getByText(/▲ 3 \(2.01%\)/)).toBeTruthy();                 // vs previous close 149.25
+    expect(screen.getByTestId('chart').dataset.live).toBe('152.25');
+  });
+  it('a stream tick fires a price alert immediately (no waiting for a poll)', async () => {
+    await boot(); await open(); await setAlert('above', 160);
+    expect(notes.length).toBe(0);
+    await push({ id: 'AAPL', price: 161, time: Date.now() });
+    expect(notes).toEqual([{ t: 'Stock alert', body: 'AAPL is 161 — above your 160 alert' }]);
+  });
+  it('a stale poll does not overwrite a fresher stream price', async () => {
+    await boot(); await open();
+    await push({ id: 'AAPL', price: 152.25, time: Date.now() });
+    prices.AAPL = 150; await flush(15100);
+    expect(screen.getAllByText('152.25').length).toBeGreaterThan(0); expect(screen.queryAllByText('150').length).toBe(0);
+  });
+  it('reconnects the stream when a stock is added', async () => {
+    await boot(); const n = FakeWS.all.length;
+    fireEvent.change(screen.getByPlaceholderText('Search company or symbol…'), { target: { value: 'COALINDIA.NS' } });
+    fireEvent.click(screen.getByText('Add')); await flush();
+    expect(FakeWS.all.length).toBeGreaterThan(n); await open();
+    expect(JSON.parse(ws().sent[0]).subscribe).toContain('COALINDIA.NS');
   });
 });

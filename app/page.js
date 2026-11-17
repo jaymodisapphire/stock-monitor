@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import PriceChart from "@/components/PriceChart";
+import { connectStream } from "@/lib/yahooStream";
 
 const f = n => (n == null ? "–" : Number(n).toLocaleString(undefined, { maximumFractionDigits: 2 }));
 const getJSON = u => fetch(u).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); });
@@ -17,6 +18,9 @@ export default function Home() {
   const [quotes, setQuotes] = useState({});
   const [stats, setStats] = useState({});
   const [status, setStatus] = useState("connecting…");
+  const [stream, setStream] = useState("connecting");   // connecting | connected | live | offline
+  const [ticks, setTicks] = useState({});
+  const lastTick = useRef({});
   const [notifLabel, setNotifLabel] = useState("Enable notifications");
   const [toasts, setToasts] = useState([]);
   const [newSym, setNewSym] = useState("");
@@ -46,7 +50,8 @@ export default function Home() {
     try { const c = new AudioContext(), o = c.createOscillator(); o.connect(c.destination); o.frequency.value = 880; o.start(); o.stop(c.currentTime + 0.25); } catch {}
   };
 
-  // live quotes every 10s
+  // quotes poll: fast fallback (5s) when the stream is down, slow re-sync when it is up
+  const pollMs = stream === "live" ? 15000 : stream === "connected" ? 10000 : 5000;
   useEffect(() => {
     if (!ready) return;
     let alive = true;
@@ -54,13 +59,45 @@ export default function Home() {
       try {
         const d = await getJSON("/api/quotes?symbols=" + wl.join(","));
         if (!alive) return;
-        setQuotes(q => ({ ...q, ...Object.fromEntries(d.map(x => [x.symbol, x])) }));
-        setStatus("● live · " + new Date().toLocaleTimeString());
+        setQuotes(qs => {
+          const n = { ...qs };
+          d.forEach(x => {
+            const o = qs[x.symbol], fresh = o && Date.now() - (lastTick.current[x.symbol]?.at || 0) < 20000;
+            n[x.symbol] = fresh ? { ...x, price: o.price, change: o.change, pct: o.pct, dayHigh: Math.max(x.dayHigh ?? 0, o.dayHigh ?? 0), dayLow: Math.min(x.dayLow ?? Infinity, o.dayLow ?? Infinity) } : x;
+          });
+          return n;
+        });
+        setStatus("● updated " + new Date().toLocaleTimeString());
       } catch { if (alive) setStatus("⚠ connection problem"); }
     };
     poll();
-    const id = setInterval(poll, 10000);
+    const id = setInterval(poll, pollMs);
     return () => { alive = false; clearInterval(id); };
+  }, [wl, ready, pollMs]);
+
+  // real-time stream (WebSocket straight from the browser)
+  useEffect(() => {
+    if (!ready || !wl.length) return;
+    const conn = connectStream({
+      symbols: wl,
+      onStatus: s => setStream(prev => (s === "connected" && prev === "live" ? prev : s)),
+      onTick: t => {
+        lastTick.current[t.symbol] = { at: Date.now() };
+        setStream("live");
+        setTicks(x => ({ ...x, [t.symbol]: t }));
+        setQuotes(qs => {
+          const o = qs[t.symbol]; if (!o) return qs;
+          const prev = o.prevClose ?? (o.change != null ? o.price - o.change : null);
+          const change = prev != null ? t.price - prev : o.change;
+          return { ...qs, [t.symbol]: { ...o, price: t.price, change, pct: prev ? (change / prev) * 100 : o.pct,
+            dayHigh: Math.max(o.dayHigh ?? t.price, t.price), dayLow: Math.min(o.dayLow ?? t.price, t.price) } };
+        });
+      }
+    });
+    const idle = setInterval(() => {
+      if (!Object.values(lastTick.current).some(x => Date.now() - x.at < 30000)) setStream(s => (s === "live" ? "connected" : s));
+    }, 5000);
+    return () => { conn.close(); clearInterval(idle); };
   }, [wl, ready]);
 
   // price alerts
@@ -134,6 +171,7 @@ export default function Home() {
       <header>
         <h1>📈 Live Stock Monitor</h1>
         <span className="live">{status}</span>
+        <span className={"badge " + stream}>{stream === "live" ? "⚡ LIVE stream" : stream === "connected" ? "● Stream connected · waiting for trades" : "↻ Polling every 5s"}</span>
         <button onClick={enableNotif}>{notifLabel}</button>
       </header>
       <main>
@@ -182,7 +220,7 @@ export default function Home() {
             <span className="sep" />
             {[["vol", "Volume"], ["sma", "SMA 20"], ["ema", "EMA 50"], ["bb", "Bollinger"], ["rsi", "RSI"]].map(([k, l]) => <button key={k} className={ind[k] ? "on" : ""} onClick={() => setInd(i => ({ ...i, [k]: !i[k] }))}>{l}</button>)}
           </div>
-          {sel && <PriceChart symbol={sel} tf={tf} type={type} ind={ind} live={q?.price} />}
+          {sel && <PriceChart symbol={sel} tf={tf} type={type} ind={ind} tick={ticks[sel]} />}
           <div className="stats">
             <Box l="Today" h={q?.dayHigh} lo={q?.dayLow} />
             <Box l="Last month" h={st.month?.high} lo={st.month?.low} />

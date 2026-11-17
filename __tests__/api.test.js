@@ -22,7 +22,7 @@ describe('/api/quotes', () => {
   it('returns price, change, percent, day high/low and OPEN state', async () => {
     fetchMock.mockResolvedValue(yahoo(meta(), [[now, 110]]));
     const d = await (await quotes(req('quotes', { symbols: 'AAPL' }))).json();
-    expect(d[0]).toMatchObject({ symbol: 'AAPL', name: 'Apple Inc.', price: 110, change: 10, pct: 10, dayHigh: 112, dayLow: 99, state: 'OPEN' });
+    expect(d[0]).toMatchObject({ symbol: 'AAPL', name: 'Apple Inc.', price: 110, prevClose: 100, change: 10, pct: 10, dayHigh: 112, dayLow: 99, state: 'OPEN' });
   });
   it('reports CLOSED outside trading hours and negative change', async () => {
     fetchMock.mockResolvedValue(yahoo(meta({ regularMarketPrice: 90, currentTradingPeriod: { regular: { start: now - 9e3, end: now - 5e3 } } }), [[now, 90]]));
@@ -53,7 +53,8 @@ describe('/api/chart (candles)', () => {
   it('returns OHLCV bars, sorted, de-duplicated, null bars dropped, shifted to exchange time', async () => {
     fetchMock.mockResolvedValue(yahoo({ gmtoffset: -18000 }, [
       [200, 2, 3, 1, 1.5, 50], [100, 1, 2, 0.5, 0.8, 10], [200, 2.2, 3.2, 1.2, 1.6, 60], [300, null]]));
-    const d = await (await chartRoute(req('chart', { symbol: 'AAPL', tf: '5m' }))).json();
+    const r = await chartRoute(req('chart', { symbol: 'AAPL', tf: '5m' })); const d = await r.json();
+    expect(r.headers.get('x-gmtoffset')).toBe('-18000');
     expect(d).toEqual([
       { time: 100 - 18000, open: 0.8, high: 2, low: 0.5, close: 1, volume: 10 },
       { time: 200 - 18000, open: 1.6, high: 3.2, low: 1.2, close: 2.2, volume: 60 }]);   // later duplicate wins

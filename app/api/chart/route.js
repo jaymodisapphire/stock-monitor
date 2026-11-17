@@ -22,7 +22,7 @@ export async function GET(req) {
       bars.set(time, { time, open: x.open, high: x.high, low: x.low, close: x.close, volume: x.volume });
     }
     const out = [...bars.values()].sort((a, b) => a.time - b.time);
-    return NextResponse.json(out, { headers: cache(10) });
+    return NextResponse.json(out, { headers: { ...cache(10), 'x-gmtoffset': String(off) } });
   } catch (e) {
     return NextResponse.json({ error: e.message }, { status: 500 });
   }

@@ -11,7 +11,7 @@ async function one(symbol) {
   return {
     symbol: m.symbol, name: m.shortName || m.longName, currency: m.currency,
     state: reg && now >= reg.start && now <= reg.end ? 'OPEN' : 'CLOSED',
-    price, change: prev != null ? price - prev : null, pct: prev ? ((price - prev) / prev) * 100 : null,
+    price, prevClose: prev ?? null, change: prev != null ? price - prev : null, pct: prev ? ((price - prev) / prev) * 100 : null,
     dayHigh: m.regularMarketDayHigh, dayLow: m.regularMarketDayLow
   };
 }

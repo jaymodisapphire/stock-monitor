@@ -30,3 +30,4 @@ button{cursor:pointer}button.p{background:var(--ac);border-color:var(--ac);color
 .legend{position:absolute;top:8px;left:10px;z-index:3;font-size:12px;color:#b2b5be;pointer-events:none}
 .cerr{position:absolute;top:40%;left:0;right:0;text-align:center;z-index:3;color:var(--dn)}
 .attr{padding:6px 20px 16px;color:var(--mu);font-size:12px}.attr a{color:var(--mu)}
+.badge{font-size:12px;padding:3px 10px;border-radius:12px;background:var(--card);color:var(--mu)}.badge.live{color:var(--up);border:1px solid var(--up)}.badge.connected{color:#f7b500}
